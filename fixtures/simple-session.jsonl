@@ -1,0 +1,6 @@
+{"hook_event_name":"SessionStart","session_id":"demo","cwd":"/repo"}
+{"hook_event_name":"InstructionsLoaded","session_id":"demo","file_path":"/repo/CLAUDE.md","load_reason":"session_start"}
+{"hook_event_name":"PostToolUse","session_id":"demo","tool_name":"Read","tool_input":{"file_path":"/repo/src/main.rs"},"tool_response":{"content":"fn main() {}"}}
+{"hook_event_name":"PostToolUse","session_id":"demo","tool_name":"Bash","tool_input":{"command":"cargo test"},"tool_response":{"stdout":"test result: ok","stderr":"","interrupted":false}}
+{"hook_event_name":"PostToolUse","session_id":"demo","tool_name":"Edit","tool_input":{"file_path":"/repo/src/main.rs"},"tool_response":{"success":true}}
+{"hook_event_name":"Stop","session_id":"demo"}
