@@ -203,6 +203,8 @@ fn build_warnings(events: &[ContextEvent]) -> Vec<ContextWarning> {
 
     warnings.extend(warn_large_context_sources(events));
     warnings.extend(warn_lockfile_reads(events));
+
+    warnings
 }
 
 fn warn_large_context_sources(events: &[ContextEvent]) -> Vec<ContextWarning> {
