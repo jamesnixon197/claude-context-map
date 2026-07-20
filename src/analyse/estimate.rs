@@ -6,7 +6,8 @@ pub fn estimate_approximate_characters_used(raw_value: &Value, kind: &ContextSou
         ContextSourceKind::FileRead
         | ContextSourceKind::FileSearch
         | ContextSourceKind::ShellOutput
-        | ContextSourceKind::Web => raw_value
+        | ContextSourceKind::Web
+        | ContextSourceKind::McpTool { .. } => raw_value
             .get("tool_response")
             .map(|value| value.to_string().chars().count())
             .unwrap_or(0),
