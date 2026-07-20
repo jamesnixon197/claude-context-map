@@ -115,6 +115,36 @@ fn main() -> Result<()> {
                 None => println!("No sessions captured yet."),
             }
         }
+        Command::Digest { session, for_injection } => {
+            let project = project::find_project()?;
+            let storage = storage::Storage::for_project(&project);
+            let config = config::load_config(&storage)?;
+
+            let target = match session {
+                Some(path) => Some(path),
+                None => {
+                    let current = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
+                    storage
+                        .previous_substantive_session(current.as_deref(), config.digest.min_events)?
+                }
+            };
+
+            let Some(path) = target else {
+                return Ok(());
+            };
+
+            let analysis = analyse::analyse_file(&path, &config)?;
+            if !analyse::has_signal(&analysis, config.digest.dominant_share_threshold) {
+                return Ok(());
+            }
+
+            let body = analyse::digest_body(&analysis);
+            if for_injection {
+                print!("{}", analyse::wrap_for_injection(&body));
+            } else {
+                println!("{body}");
+            }
+        }
         Command::History => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);

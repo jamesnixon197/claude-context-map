@@ -38,6 +38,12 @@ pub enum Command {
     Show {
         n: usize,
     },
+    Digest {
+        #[arg(long, value_name = "PATH")]
+        session: Option<PathBuf>,
+        #[arg(long)]
+        for_injection: bool,
+    },
     History,
     Doctor,
 }
