@@ -155,6 +155,10 @@ fn main() -> Result<()> {
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
 
+            if !config.digest.enabled {
+                return Ok(());
+            }
+
             let target = match session {
                 Some(path) => Some(path),
                 None => {

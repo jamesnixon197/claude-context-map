@@ -32,6 +32,7 @@ pub struct LinkConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DigestConfig {
+    pub enabled: bool,
     pub dominant_share_threshold: f64,
     pub min_events: usize,
 }
@@ -39,6 +40,7 @@ pub struct DigestConfig {
 impl Default for DigestConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             dominant_share_threshold: 0.25,
             min_events: 5,
         }
@@ -122,7 +124,10 @@ mod tests {
     fn config_parses_links_linear_base() {
         let toml = "mode = \"safe\"\n[links]\nlinear = \"https://linear.app/acme\"\n";
         let config: CcmapConfig = toml::from_str(toml).unwrap();
-        assert_eq!(config.links.linear.as_deref(), Some("https://linear.app/acme"));
+        assert_eq!(
+            config.links.linear.as_deref(),
+            Some("https://linear.app/acme")
+        );
     }
 
     #[test]
@@ -144,5 +149,18 @@ mod tests {
         let config: CcmapConfig = toml::from_str(toml).unwrap();
         assert_eq!(config.digest.dominant_share_threshold, 0.4);
         assert_eq!(config.digest.min_events, 10);
+    }
+
+    #[test]
+    fn config_defaults_digest_enabled_to_true() {
+        let config = CcmapConfig::default();
+        assert!(config.digest.enabled);
+    }
+
+    #[test]
+    fn config_parses_digest_enabled_override() {
+        let toml = "mode = \"safe\"\n[digest]\nenabled = false\n";
+        let config: CcmapConfig = toml::from_str(toml).unwrap();
+        assert!(!config.digest.enabled);
     }
 }
