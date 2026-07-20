@@ -1,3 +1,4 @@
+use super::report::format_count;
 use crate::model::{SessionAnalysis, WarningSeverity};
 
 pub fn has_signal(analysis: &SessionAnalysis, dominant_share_threshold: f64) -> bool {
@@ -84,7 +85,7 @@ pub fn digest_body(analysis: &SessionAnalysis) -> String {
     format!(
         "ccmap — previous session ({}): ~{} tokens across {} sources.\nTop consumers: {}.\n{}",
         short_id,
-        analysis.approx_context_tokens,
+        format_count(analysis.approx_context_tokens),
         analysis.context_map.len(),
         top.join(", "),
         warn_line,

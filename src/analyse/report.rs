@@ -537,7 +537,7 @@ fn token_bar(share: f64, cells: usize) -> String {
     format!("{}{}", "█".repeat(filled), "░".repeat(empty))
 }
 
-fn format_count(value: usize) -> String {
+pub(crate) fn format_count(value: usize) -> String {
     let digits = value.to_string();
     let bytes = digits.as_bytes();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
