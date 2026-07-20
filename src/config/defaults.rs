@@ -9,6 +9,7 @@ pub struct CcmapConfig {
     pub mode: CaptureMode,
     pub warning_rules: WarningRules,
     pub links: LinkConfig,
+    pub digest: DigestConfig,
 }
 
 impl Default for CcmapConfig {
@@ -17,6 +18,7 @@ impl Default for CcmapConfig {
             mode: CaptureMode::default(),
             warning_rules: WarningRules::default(),
             links: LinkConfig::default(),
+            digest: DigestConfig::default(),
         }
     }
 }
@@ -25,6 +27,22 @@ impl Default for CcmapConfig {
 #[serde(default)]
 pub struct LinkConfig {
     pub linear: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DigestConfig {
+    pub dominant_share_threshold: f64,
+    pub min_events: usize,
+}
+
+impl Default for DigestConfig {
+    fn default() -> Self {
+        Self {
+            dominant_share_threshold: 0.25,
+            min_events: 5,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -111,5 +129,20 @@ mod tests {
     fn config_defaults_links_to_none() {
         let config = CcmapConfig::default();
         assert_eq!(config.links.linear, None);
+    }
+
+    #[test]
+    fn config_defaults_digest_thresholds() {
+        let config = CcmapConfig::default();
+        assert_eq!(config.digest.dominant_share_threshold, 0.25);
+        assert_eq!(config.digest.min_events, 5);
+    }
+
+    #[test]
+    fn config_parses_digest_overrides() {
+        let toml = "mode = \"safe\"\n[digest]\ndominant_share_threshold = 0.4\nmin_events = 10\n";
+        let config: CcmapConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.digest.dominant_share_threshold, 0.4);
+        assert_eq!(config.digest.min_events, 10);
     }
 }
