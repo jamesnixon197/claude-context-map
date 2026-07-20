@@ -142,6 +142,37 @@ to the ticket. The Linear base URL resolves from the `LINEAR_URL` environment
 variable, else `[links] linear` in config. Links and colour are emitted only to
 a TTY (and never when `NO_COLOR` is set); piped output stays plain text.
 
+## Session digest
+
+`ccmap digest` emits a terse "where & why" summary of the **previous
+substantive** session (most-recently-modified session that isn't the current
+one and has ≥ `min_events` events):
+
+```text
+ccmap — previous session (01e1536f): ~103,313 tokens across 121 sources.
+Top consumers: sds_text.txt 31% (read 23×), ingress.test.ts 6%, spec.md 5%.
+Warnings: 2 medium, 4 low.
+```
+
+It is **silent** unless the previous session has signal — a warning, or a top
+source ≥ `dominant_share_threshold` of context. Flags:
+
+- `--session <path>` — digest a specific session file instead of auto-selecting.
+- `--for-injection` — wrap the body for `SessionStart` context injection.
+
+Wire it as a `SessionStart` hook so Claude sees the previous session's digest at
+the start of a new session and can raise it unprompted:
+
+```json
+"SessionStart": [
+  { "matcher": "",
+    "hooks": [ { "type": "command", "command": "ccmap digest --for-injection" } ] }
+]
+```
+
+The current session is identified via the `CLAUDE_CODE_SESSION_ID` environment
+variable so the just-started (empty) session is excluded from selection.
+
 ## Configuration
 
 Default config path:
@@ -177,6 +208,10 @@ generated_path_segments = [
 
 [links]
 linear = "https://linear.app/your-workspace"
+
+[digest]
+dominant_share_threshold = 0.25
+min_events = 5
 ```
 
 ## Warning types
