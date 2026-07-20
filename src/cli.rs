@@ -18,10 +18,25 @@ pub enum Command {
         path: PathBuf,
         #[arg(short, long)]
         all: bool,
+        #[arg(long, value_name = "KIND")]
+        kind: Vec<String>,
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+        #[arg(long)]
+        detail: bool,
     },
     Latest {
         #[arg(short, long)]
         all: bool,
+        #[arg(long, value_name = "KIND")]
+        kind: Vec<String>,
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+        #[arg(long)]
+        detail: bool,
+    },
+    Show {
+        n: usize,
     },
     History,
     Doctor,

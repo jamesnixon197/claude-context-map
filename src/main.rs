@@ -9,19 +9,43 @@ mod storage;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Command};
-use model::ReportOptions;
+use model::{KindFilter, ReportOptions};
 use std::io::IsTerminal;
 
 const FALLBACK_TERMINAL_WIDTH: usize = 80;
 
-fn resolve_report_options(all: bool) -> ReportOptions {
+struct ReportFlags {
+    all: bool,
+    kind: Vec<String>,
+    top: Option<usize>,
+    detail: bool,
+}
+
+fn resolve_report_options(flags: ReportFlags, config: &config::CcmapConfig) -> ReportOptions {
     let stdout_is_terminal = std::io::stdout().is_terminal();
     let color_disabled = std::env::var_os("NO_COLOR").is_some();
+    let enabled = stdout_is_terminal && !color_disabled;
+
+    let linear_base = std::env::var("LINEAR_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| config.links.linear.clone());
+
+    let kinds = flags
+        .kind
+        .iter()
+        .filter_map(|k| KindFilter::from_str_opt(k))
+        .collect();
 
     ReportOptions {
-        all,
-        use_color: stdout_is_terminal && !color_disabled,
+        all: flags.all,
+        use_color: enabled,
+        use_links: enabled,
         terminal_width: terminal_width().unwrap_or(FALLBACK_TERMINAL_WIDTH),
+        linear_base,
+        kinds,
+        top: flags.top,
+        detail: flags.detail,
     }
 }
 
@@ -50,16 +74,16 @@ fn main() -> Result<()> {
         Command::Capture => {
             capture::capture_from_stdin()?;
         }
-        Command::Analyse { path, all } => {
+        Command::Analyse { path, all, kind, top, detail } => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
 
             let analysis = analyse::analyse_file(&path, &config)?;
-
-            analyse::print_analysis(&analysis, resolve_report_options(all));
+            let options = resolve_report_options(ReportFlags { all, kind, top, detail }, &config);
+            analyse::print_analysis(&analysis, &options);
         }
-        Command::Latest { all } => {
+        Command::Latest { all, kind, top, detail } => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
@@ -67,7 +91,26 @@ fn main() -> Result<()> {
             match storage.latest_session_file()? {
                 Some(path) => {
                     let analysis = analyse::analyse_file(&path, &config)?;
-                    analyse::print_analysis(&analysis, resolve_report_options(all));
+                    let options =
+                        resolve_report_options(ReportFlags { all, kind, top, detail }, &config);
+                    analyse::print_analysis(&analysis, &options);
+                }
+                None => println!("No sessions captured yet."),
+            }
+        }
+        Command::Show { n } => {
+            let project = project::find_project()?;
+            let storage = storage::Storage::for_project(&project);
+            let config = config::load_config(&storage)?;
+
+            match storage.latest_session_file()? {
+                Some(path) => {
+                    let analysis = analyse::analyse_file(&path, &config)?;
+                    let options = resolve_report_options(
+                        ReportFlags { all: true, kind: Vec::new(), top: None, detail: false },
+                        &config,
+                    );
+                    analyse::print_source_detail(&analysis, n, &options)?;
                 }
                 None => println!("No sessions captured yet."),
             }
