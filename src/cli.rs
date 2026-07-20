@@ -46,4 +46,7 @@ pub enum Command {
     },
     History,
     Doctor,
+    Graph {
+        path: Option<PathBuf>,
+    },
 }

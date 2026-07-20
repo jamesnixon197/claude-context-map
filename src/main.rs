@@ -206,6 +206,24 @@ fn main() -> Result<()> {
             println!("Config file:  {}", storage.config_file.display());
             println!("Config exists: {}", storage.config_file.exists());
         }
+        Command::Graph { path } => {
+            let project = project::find_project()?;
+            let storage = storage::Storage::for_project(&project);
+            let config = config::load_config(&storage)?;
+
+            let target = match path {
+                Some(path) => Some(path),
+                None => storage.latest_session_file()?,
+            };
+
+            match target {
+                Some(session_path) => {
+                    let output_path = render::write_graph(&storage, &config, &session_path)?;
+                    println!("Graph written: {}", output_path.display());
+                }
+                None => println!("No sessions captured yet."),
+            }
+        }
     }
 
     Ok(())
