@@ -69,4 +69,84 @@ impl Storage {
 
         Ok(sessions_with_times.pop().map(|(path, _)| path))
     }
+
+    pub fn previous_substantive_session(
+        &self,
+        current_id: Option<&str>,
+        min_events: usize,
+    ) -> Result<Option<PathBuf>> {
+        let files = self.session_files()?;
+        let mut entries: Vec<(String, String, usize, u64)> = Vec::new();
+        for path in &files {
+            let mtime = fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            let path_str = path.to_string_lossy().to_string();
+            entries.push((path_str, session_id_of(path), count_lines(path), mtime));
+        }
+        Ok(select_previous(&entries, current_id, min_events).map(PathBuf::from))
+    }
+}
+
+fn select_previous(
+    entries: &[(String, String, usize, u64)],
+    current_id: Option<&str>,
+    min_events: usize,
+) -> Option<String> {
+    let mut candidates: Vec<&(String, String, usize, u64)> = entries
+        .iter()
+        .filter(|(_, id, lines, _)| Some(id.as_str()) != current_id && *lines >= min_events)
+        .collect();
+    candidates.sort_by_key(|(_, _, _, mtime)| *mtime);
+    candidates.last().map(|(path, _, _, _)| path.clone())
+}
+
+fn count_lines(path: &std::path::Path) -> usize {
+    fs::read_to_string(path)
+        .map(|content| content.lines().filter(|line| !line.trim().is_empty()).count())
+        .unwrap_or(0)
+}
+
+fn session_id_of(path: &std::path::Path) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_previous_skips_current_and_trivial_picks_newest() {
+        let entries = vec![
+            ("cur.jsonl".to_string(), "CUR".to_string(), 50usize, 3u64),
+            ("big.jsonl".to_string(), "BIG".to_string(), 40usize, 2u64),
+            ("tiny.jsonl".to_string(), "TINY".to_string(), 2usize, 1u64),
+        ];
+        let pick = select_previous(&entries, Some("CUR"), 5);
+        assert_eq!(pick.as_deref(), Some("big.jsonl"));
+    }
+
+    #[test]
+    fn select_previous_returns_none_when_only_current_or_trivial() {
+        let entries = vec![
+            ("cur.jsonl".to_string(), "CUR".to_string(), 50usize, 2u64),
+            ("tiny.jsonl".to_string(), "TINY".to_string(), 1usize, 1u64),
+        ];
+        assert_eq!(select_previous(&entries, Some("CUR"), 5), None);
+    }
+
+    #[test]
+    fn select_previous_without_current_id_still_skips_trivial() {
+        let entries = vec![
+            ("a.jsonl".to_string(), "A".to_string(), 9usize, 2u64),
+            ("b.jsonl".to_string(), "B".to_string(), 3usize, 3u64),
+        ];
+        assert_eq!(select_previous(&entries, None, 5).as_deref(), Some("a.jsonl"));
+    }
 }
