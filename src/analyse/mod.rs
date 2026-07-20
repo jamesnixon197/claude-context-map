@@ -1,4 +1,5 @@
 mod classify;
+mod digest;
 mod estimate;
 mod mcp;
 mod normalise;
@@ -12,6 +13,7 @@ use crate::model::SessionAnalysis;
 use anyhow::Result;
 use std::path::Path;
 
+pub use digest::{digest_body, has_signal, wrap_for_injection};
 pub use report::{print_analysis, print_source_detail};
 
 pub fn analyse_file(path: &Path, config: &CcmapConfig) -> Result<SessionAnalysis> {
