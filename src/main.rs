@@ -66,9 +66,13 @@ fn main() -> Result<()> {
         }
         Command::Doctor => {
             let project = project::find_project()?;
+            let storage = storage::Storage::for_project(&project);
+
             println!("Project root: {}", project.root.display());
             println!("Project name: {}", project.name);
             println!("Project id:   {}", project.id);
+            println!("Config file:  {}", storage.config_file.display());
+            println!("Config exists: {}", storage.config_file.exists());
         }
     }
 
