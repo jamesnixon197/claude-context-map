@@ -9,11 +9,14 @@ const MIN_LABEL_WIDTH: usize = 24;
 const TOKEN_COLUMN_WIDTH: usize = 8;
 const MAX_CONTENT_WIDTH: usize = 120;
 
-// Width of everything in a map row except the flexible label column:
-//   "  " bar "  " "NNN%" "  " tag(7) "  " <label> "  " tokens(8)
-const MAP_ROW_FIXED_WIDTH: usize = 2 + BAR_CELLS + 2 + 4 + 2 + 7 + 2 + 2 + TOKEN_COLUMN_WIDTH;
+const RANK_COLUMN_WIDTH: usize = 3;
 
-pub fn print_analysis(analysis: &SessionAnalysis, options: ReportOptions) {
+// Width of everything in a map row except the flexible label column:
+//   "  " "NNN." " " bar "  " "NNN%" "  " tag(7) "  " <label> "  " tokens(8)
+const MAP_ROW_FIXED_WIDTH: usize =
+    2 + RANK_COLUMN_WIDTH + 2 + BAR_CELLS + 2 + 4 + 2 + 7 + 2 + 2 + TOKEN_COLUMN_WIDTH;
+
+pub fn print_analysis(analysis: &SessionAnalysis, options: &ReportOptions) {
     let label_width = label_column_width(options.terminal_width);
     let content_width = MAP_ROW_FIXED_WIDTH + label_width;
 
@@ -22,7 +25,7 @@ pub fn print_analysis(analysis: &SessionAnalysis, options: ReportOptions) {
     print_warnings(analysis, options, content_width);
 }
 
-fn print_header(analysis: &SessionAnalysis, options: ReportOptions, content_width: usize) {
+fn print_header(analysis: &SessionAnalysis, options: &ReportOptions, content_width: usize) {
     let paint = Painter::new(options);
 
     println!(
@@ -53,7 +56,7 @@ fn print_header(analysis: &SessionAnalysis, options: ReportOptions, content_widt
 
 fn print_context_map(
     analysis: &SessionAnalysis,
-    options: ReportOptions,
+    options: &ReportOptions,
     label_width: usize,
     content_width: usize,
 ) {
@@ -64,33 +67,47 @@ fn print_context_map(
     let paint = Painter::new(options);
     let total = total_map_tokens(&analysis.context_map).max(1);
 
+    let ranked = ranked_sources(&analysis.context_map);
+    let filtered = filter_sources(&ranked, &options.kinds);
+
+    let default_rows = options.top.unwrap_or(DEFAULT_MAP_ROWS);
     let visible = if options.all {
-        analysis.context_map.len()
+        filtered.len()
     } else {
-        DEFAULT_MAP_ROWS.min(analysis.context_map.len())
+        default_rows.min(filtered.len())
     };
 
-    let heading = if options.all || visible >= analysis.context_map.len() {
-        format!("{} sources", analysis.context_map.len())
+    let filtered_note = if options.kinds.is_empty() { "" } else { " (filtered)" };
+    let heading = if options.all || visible >= filtered.len() {
+        format!(
+            "{} of {} sources{}",
+            filtered.len(),
+            analysis.context_map.len(),
+            filtered_note
+        )
     } else {
-        format!("top {} of {} sources", visible, analysis.context_map.len())
+        format!(
+            "top {} of {} sources{}",
+            visible,
+            filtered.len(),
+            filtered_note
+        )
     };
     println!(" {}  {}", paint.bold("Context map"), paint.dim(&heading));
     println!();
 
-    for source in analysis.context_map.iter().take(visible) {
-        print_map_row(source, total, label_width, &paint, options.all);
+    for (rank, source) in filtered.iter().take(visible) {
+        print_map_row(*rank, source, total, label_width, &paint, options);
+        if !options.all {
+            println!();
+        }
     }
 
-    if visible < analysis.context_map.len() {
-        let remaining = analysis.context_map.len() - visible;
-        let tail_tokens: usize = analysis.context_map[visible..]
-            .iter()
-            .map(|source| source.approx_tokens)
-            .sum();
+    if visible < filtered.len() {
+        let remaining = filtered.len() - visible;
+        let tail_tokens: usize = filtered[visible..].iter().map(|(_, s)| s.approx_tokens).sum();
         let rollup = format!("+ {remaining} more sources");
-        // Right-align the tail total under the row token column.
-        let token_cell = format!("~{}", format_count(tail_tokens));
+        let token_cell = format!("~{}  ·  --all", format_count(tail_tokens));
         let gap = content_width
             .saturating_sub(2 + rollup.chars().count() + token_cell.chars().count());
         println!(
@@ -104,31 +121,87 @@ fn print_context_map(
     print_rule(options, content_width);
 }
 
+fn ranked_sources(map: &[ContextSourceSummary]) -> Vec<(usize, &ContextSourceSummary)> {
+    map.iter().enumerate().map(|(i, s)| (i + 1, s)).collect()
+}
+
+fn filter_sources<'a>(
+    ranked: &[(usize, &'a ContextSourceSummary)],
+    kinds: &[crate::model::KindFilter],
+) -> Vec<(usize, &'a ContextSourceSummary)> {
+    ranked
+        .iter()
+        .filter(|(_, s)| kinds.is_empty() || kinds.iter().any(|k| k.matches(&s.source_kind)))
+        .copied()
+        .collect()
+}
+
 fn print_map_row(
+    rank: usize,
     source: &ContextSourceSummary,
     total: usize,
     label_width: usize,
     paint: &Painter,
-    all: bool,
+    options: &ReportOptions,
 ) {
     let share = source.approx_tokens as f64 / total as f64;
     let bar = token_bar(share, BAR_CELLS);
     let percent = format!("{:>3}%", (share * 100.0).round() as usize);
     let tag = format!("{:<7}", kind_tag(&source.source_kind));
-    let label = fit_label(&source.source_kind, &source.source_label, label_width, all);
+    let label = fit_label(&source.source_kind, &source.source_label, label_width, options.all);
+    let linked = link_for_source(paint, source, options, &label);
     let tokens = format_count(source.approx_tokens);
 
     println!(
-        "  {}  {}  {}  {:<label_width$}  {:>8}",
+        "  {}. {}  {}  {}  {}  {:>8}",
+        paint.dim(&format!("{rank:>RANK_COLUMN_WIDTH$}")),
         paint.bar(&bar, share),
         paint.dim(&percent),
         paint.kind(&tag, &source.source_kind),
-        label,
+        pad_display(&linked, &label, label_width),
         paint.token(&tokens),
     );
+
+    if options.detail && matches!(source.source_kind, ContextSourceKind::ShellOutput) {
+        print_shell_detail(&source.source_label, paint);
+    }
 }
 
-fn print_warnings(analysis: &SessionAnalysis, options: ReportOptions, content_width: usize) {
+fn link_for_source(
+    paint: &Painter,
+    source: &ContextSourceSummary,
+    options: &ReportOptions,
+    label: &str,
+) -> String {
+    match &source.source_kind {
+        ContextSourceKind::FileRead
+        | ContextSourceKind::FileEdit
+        | ContextSourceKind::FileWrite
+        | ContextSourceKind::Instruction => {
+            if source.source_label.starts_with('/') {
+                paint.link(label, &format!("file://{}", source.source_label))
+            } else {
+                label.to_string()
+            }
+        }
+        ContextSourceKind::McpTool { server } if server == "linear" => {
+            match (&options.linear_base, extract_ticket_id(&source.source_label)) {
+                (Some(base), Some(ticket)) => paint.link(label, &linear_ticket_url(base, &ticket)),
+                _ => label.to_string(),
+            }
+        }
+        _ => label.to_string(),
+    }
+}
+
+// Left-pad to label_width using the VISIBLE label length, so OSC 8 escape
+// bytes in `linked` don't throw off column alignment.
+fn pad_display(linked: &str, visible: &str, width: usize) -> String {
+    let pad = width.saturating_sub(visible.chars().count());
+    format!("{linked}{}", " ".repeat(pad))
+}
+
+fn print_warnings(analysis: &SessionAnalysis, options: &ReportOptions, content_width: usize) {
     let paint = Painter::new(options);
 
     if analysis.warnings.is_empty() {
@@ -149,7 +222,7 @@ fn print_warnings(analysis: &SessionAnalysis, options: ReportOptions, content_wi
     }
 }
 
-fn print_rule(options: ReportOptions, content_width: usize) {
+fn print_rule(options: &ReportOptions, content_width: usize) {
     let paint = Painter::new(options);
     println!("{}", paint.dim(&"─".repeat(content_width)));
 }
@@ -299,8 +372,8 @@ fn shorten_path(path: &str, budget: usize) -> String {
 fn summarise_command(command: &str) -> String {
     let stage = first_meaningful_stage(command);
     let heredoc_lines = heredoc_line_count_from(command, stage);
-    let stage = strip_env_assignments(stage);
-    let head = stage.split(" | ").next().unwrap_or(stage);
+    let stage_body = strip_env_assignments(stage);
+    let head = stage_body.split(" | ").next().unwrap_or(stage_body);
     let head = collapse_whitespace(head);
 
     match heredoc_lines {
@@ -312,8 +385,79 @@ fn summarise_command(command: &str) -> String {
                 .unwrap_or(&head);
             format!("{head} «{lines}-line heredoc»")
         }
-        None => head,
+        None => verb_and_targets(&head).unwrap_or(head),
     }
+}
+
+fn format_shell_detail(command: &str) -> String {
+    command
+        .lines()
+        .map(|line| format!("        {}", line.trim_end()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn print_shell_detail(command: &str, paint: &Painter) {
+    println!("{}", paint.dim(&format_shell_detail(command)));
+}
+
+// True when a stage is just a section-header banner (`echo "=== … ==="`),
+// which is a label rather than the work the command actually did.
+fn is_echo_banner(stage: &str) -> bool {
+    let stripped = strip_env_assignments(stage);
+    let first = stripped.split_whitespace().next().unwrap_or("");
+    if first != "echo" && first != "printf" {
+        return false;
+    }
+    stripped.contains("===") || stripped.contains("---")
+}
+
+fn looks_like_target(token: &str) -> bool {
+    // A quoted argument is almost always a search pattern/string, not a path.
+    if token.starts_with('"') || token.starts_with('\'') {
+        return false;
+    }
+    if token.starts_with('-') || token.contains("://") {
+        return false;
+    }
+    token.contains('/') || token.contains('.') || token.contains('*')
+}
+
+fn basename(token: &str) -> String {
+    let t = token.trim_matches(|c| c == '"' || c == '\'');
+    t.rsplit('/').next().unwrap_or(t).to_string()
+}
+
+// Render a command as `<verb> · <targets>` — the program plus the file-ish
+// arguments it touched (de-duplicated by basename, capped at three with a
+// `+N` overflow). Returns None when no file targets are detectable so the
+// caller can fall back to the plain summarised command.
+fn verb_and_targets(stage: &str) -> Option<String> {
+    let stripped = strip_env_assignments(stage);
+    let mut tokens = stripped.split_whitespace();
+    let verb = tokens.next()?;
+    // Navigation commands aren't "verb · targets" — leave them verbatim.
+    if verb == "cd" || verb == "export" {
+        return None;
+    }
+    let mut targets: Vec<String> = Vec::new();
+    for token in tokens {
+        if looks_like_target(token) {
+            let name = basename(token);
+            if !name.is_empty() && !targets.contains(&name) {
+                targets.push(name);
+            }
+        }
+    }
+    if targets.is_empty() {
+        return None;
+    }
+    let shown = targets.len().min(3);
+    let mut list = targets[..shown].join(" ");
+    if targets.len() > shown {
+        list.push_str(&format!(" +{}", targets.len() - shown));
+    }
+    Some(format!("{verb} · {list}"))
 }
 
 // Split the command into stages on newlines, `&&`, and `;`, then return the
@@ -331,7 +475,7 @@ fn first_meaningful_stage(command: &str) -> &str {
 
     stages
         .iter()
-        .find(|stage| !is_navigation_stage(stage))
+        .find(|stage| !is_navigation_stage(stage) && !is_echo_banner(stage))
         .or_else(|| stages.last())
         .copied()
         .unwrap_or(command)
@@ -415,16 +559,86 @@ fn severity_label(severity: &WarningSeverity) -> &'static str {
     }
 }
 
+// Find the first ticket key (two-plus uppercase letters, dash, digits) in a
+// label, e.g. "DEC-259" in "linear: get_issue(DEC-259)".
+fn extract_ticket_id(label: &str) -> Option<String> {
+    let bytes = label.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_uppercase() {
+            i += 1;
+        }
+        let letters = i - start;
+        if letters >= 2 && i < bytes.len() && bytes[i] == b'-' {
+            let dash = i;
+            i += 1;
+            let digits_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > digits_start {
+                return Some(label[start..i].to_string());
+            }
+            i = dash + 1;
+        } else if i == start {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn linear_ticket_url(base: &str, ticket: &str) -> String {
+    format!("{}/issue/{ticket}", base.trim_end_matches('/'))
+}
+
+fn source_at_rank(map: &[ContextSourceSummary], n: usize) -> Result<&ContextSourceSummary, String> {
+    if n == 0 || n > map.len() {
+        return Err(format!("source {n} is out of range (valid: 1..={})", map.len()));
+    }
+    Ok(&map[n - 1])
+}
+
+pub fn print_source_detail(
+    analysis: &SessionAnalysis,
+    n: usize,
+    options: &ReportOptions,
+) -> anyhow::Result<()> {
+    let source = source_at_rank(&analysis.context_map, n).map_err(|e| anyhow::anyhow!(e))?;
+    let paint = Painter::new(options);
+
+    println!(
+        " {}  {}  ·  {} tokens  ·  {} occurrence(s)",
+        paint.bold(&format!("#{n}")),
+        paint.kind(kind_tag(&source.source_kind), &source.source_kind),
+        format_count(source.approx_tokens),
+        source.occurrences,
+    );
+    println!();
+    println!("{}", source.source_label);
+    Ok(())
+}
+
 // ── Styling: every method is a no-op passthrough when colour is disabled ──
 
 struct Painter {
     use_color: bool,
+    use_links: bool,
 }
 
 impl Painter {
-    fn new(options: ReportOptions) -> Self {
+    fn new(options: &ReportOptions) -> Self {
         Self {
             use_color: options.use_color,
+            use_links: options.use_links,
+        }
+    }
+
+    fn link(&self, text: &str, url: &str) -> String {
+        if self.use_links {
+            format!("\u{1b}]8;;{url}\u{1b}\\{text}\u{1b}]8;;\u{1b}\\")
+        } else {
+            text.to_string()
         }
     }
 
@@ -486,6 +700,161 @@ impl Painter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn opts(use_color: bool, use_links: bool) -> ReportOptions {
+        ReportOptions {
+            all: false,
+            use_color,
+            use_links,
+            terminal_width: 80,
+            linear_base: None,
+            kinds: Vec::new(),
+            top: None,
+            detail: false,
+        }
+    }
+
+    #[test]
+    fn extract_ticket_id_finds_a_linear_key() {
+        assert_eq!(
+            extract_ticket_id("linear: get_issue(DEC-259)").as_deref(),
+            Some("DEC-259")
+        );
+        assert_eq!(extract_ticket_id("linear: list_issues").as_deref(), None);
+        assert_eq!(
+            extract_ticket_id("Google_Drive: read_file(abc)").as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn linear_ticket_url_joins_without_double_slash() {
+        assert_eq!(
+            linear_ticket_url("https://linear.app/acme/", "DEC-1"),
+            "https://linear.app/acme/issue/DEC-1"
+        );
+        assert_eq!(
+            linear_ticket_url("https://linear.app/acme", "DEC-1"),
+            "https://linear.app/acme/issue/DEC-1"
+        );
+    }
+
+    #[test]
+    fn painter_link_is_plain_when_links_disabled() {
+        let paint = Painter::new(&opts(false, false));
+        assert_eq!(paint.link("DEC-1", "https://x/issue/DEC-1"), "DEC-1");
+        assert!(!paint.link("DEC-1", "https://x").contains('\u{1b}'));
+    }
+
+    #[test]
+    fn painter_link_wraps_in_osc8_when_enabled() {
+        let paint = Painter::new(&opts(true, true));
+        let out = paint.link("DEC-1", "https://x/issue/DEC-1");
+        assert!(out.contains("\u{1b}]8;;https://x/issue/DEC-1\u{1b}\\"));
+        assert!(out.contains("DEC-1"));
+    }
+
+    fn summary(kind: ContextSourceKind, tokens: usize, label: &str) -> ContextSourceSummary {
+        ContextSourceSummary {
+            source_kind: kind,
+            source_label: label.to_string(),
+            occurrences: 1,
+            approx_tokens: tokens,
+            trigger_reasons: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn source_at_rank_resolves_one_based_index() {
+        let map = vec![
+            summary(ContextSourceKind::FileRead, 100, "a"),
+            summary(ContextSourceKind::ShellOutput, 50, "b"),
+        ];
+        assert_eq!(source_at_rank(&map, 2).unwrap().source_label, "b");
+        assert!(source_at_rank(&map, 0).is_err());
+        assert!(source_at_rank(&map, 3).is_err());
+    }
+
+    #[test]
+    fn format_shell_detail_indents_every_line() {
+        let out = format_shell_detail("cd /repo\ncargo test");
+        for line in out.lines() {
+            assert!(line.starts_with("        "), "line not indented: {line:?}");
+        }
+        assert!(out.contains("cargo test"));
+    }
+
+    #[test]
+    fn ranked_sources_numbers_from_one_in_order() {
+        let map = vec![
+            summary(ContextSourceKind::FileRead, 100, "a"),
+            summary(ContextSourceKind::ShellOutput, 50, "b"),
+        ];
+        let ranked = ranked_sources(&map);
+        assert_eq!(ranked[0].0, 1);
+        assert_eq!(ranked[1].0, 2);
+    }
+
+    #[test]
+    fn filter_sources_keeps_rank_and_selected_kinds() {
+        let map = vec![
+            summary(ContextSourceKind::FileRead, 100, "a"),
+            summary(ContextSourceKind::ShellOutput, 50, "b"),
+            summary(ContextSourceKind::FileRead, 10, "c"),
+        ];
+        let ranked = ranked_sources(&map);
+        let filtered = filter_sources(&ranked, &[crate::model::KindFilter::Shell]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].0, 2);
+        assert_eq!(filtered[0].1.source_label, "b");
+    }
+
+    #[test]
+    fn filter_sources_empty_filter_keeps_all() {
+        let map = vec![summary(ContextSourceKind::FileRead, 100, "a")];
+        let ranked = ranked_sources(&map);
+        assert_eq!(filter_sources(&ranked, &[]).len(), 1);
+    }
+
+    #[test]
+    fn is_echo_banner_detects_section_headers() {
+        assert!(is_echo_banner("echo \"=== MSO adapter tree ===\""));
+        assert!(is_echo_banner("echo '=== x ==='"));
+        assert!(!is_echo_banner("echo hello"));
+        assert!(!is_echo_banner("grep -rn foo src"));
+    }
+
+    #[test]
+    fn summarise_command_skips_echo_banner_and_shows_real_work() {
+        let command = "echo \"=== diff ===\"\ngit diff --stat scenario.ts ingress.ts";
+        let summary = summarise_command(command);
+        assert!(summary.starts_with("git"), "got {summary:?}");
+        assert!(!summary.contains("==="));
+    }
+
+    #[test]
+    fn summarise_command_keeps_echo_when_it_is_the_only_stage() {
+        let command = "echo \"=== just a banner ===\"";
+        assert!(summarise_command(command).contains("banner"));
+    }
+
+    #[test]
+    fn verb_and_targets_extracts_program_and_files() {
+        let got = verb_and_targets("grep -rn \"mortgages/v1\" engine-runtime/foo.ts bar.ts");
+        assert_eq!(got.as_deref(), Some("grep · foo.ts bar.ts"));
+    }
+
+    #[test]
+    fn verb_and_targets_dedupes_and_caps_targets() {
+        let got = verb_and_targets("cat a.ts a.ts b.ts c.ts d.ts").unwrap();
+        assert!(got.starts_with("cat · "));
+        assert!(got.contains("+1"));
+    }
+
+    #[test]
+    fn verb_and_targets_returns_none_without_file_targets() {
+        assert_eq!(verb_and_targets("cargo test --quiet"), None);
+    }
 
     #[test]
     fn kind_tags_are_short_and_stable() {
@@ -630,11 +999,7 @@ mod tests {
 
     #[test]
     fn painter_emits_no_ansi_when_color_disabled() {
-        let paint = Painter::new(ReportOptions {
-            all: false,
-            use_color: false,
-            terminal_width: 80,
-        });
+        let paint = Painter::new(&opts(false, false));
         let styled = paint.bold("hello");
         assert_eq!(styled, "hello");
         assert!(!styled.contains('\u{1b}'));
@@ -644,11 +1009,7 @@ mod tests {
 
     #[test]
     fn painter_emits_ansi_when_color_enabled() {
-        let paint = Painter::new(ReportOptions {
-            all: false,
-            use_color: true,
-            terminal_width: 80,
-        });
+        let paint = Painter::new(&opts(true, false));
         assert!(paint.bold("hello").contains('\u{1b}'));
     }
 

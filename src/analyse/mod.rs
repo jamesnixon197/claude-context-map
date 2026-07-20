@@ -12,7 +12,7 @@ use crate::model::SessionAnalysis;
 use anyhow::Result;
 use std::path::Path;
 
-pub use report::print_analysis;
+pub use report::{print_analysis, print_source_detail};
 
 pub fn analyse_file(path: &Path, config: &CcmapConfig) -> Result<SessionAnalysis> {
     let raw_events = reader::read_jsonl_events(path)?;
