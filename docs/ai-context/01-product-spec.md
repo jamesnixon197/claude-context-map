@@ -173,6 +173,25 @@ the start of a new session and can raise it unprompted:
 The current session is identified via the `CLAUDE_CODE_SESSION_ID` environment
 variable so the just-started (empty) session is excluded from selection.
 
+## Session-end digest (on by default)
+
+`ccmap init` wires a `SessionStart` hook that runs `ccmap digest --for-injection` automatically,
+alongside the existing `ccmap capture` hook. At the start of each new session, if the previous
+substantive session had a warning or a dominant context source (>= 25% of total tokens by default),
+Claude receives a terse digest of where that session's context went — and may raise it unprompted.
+Silent when the previous session was clean.
+
+Re-running `ccmap init` on an existing project is always safe: it merges in any hooks the current
+ccmap version expects that are missing, without touching or duplicating anything else in
+`.claude/settings.local.json`.
+
+To disable the digest without removing the hook, set in `.claude/context-map/config.toml`:
+
+```toml
+[digest]
+enabled = false
+```
+
 ## Configuration
 
 Default config path:
