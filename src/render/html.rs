@@ -21,6 +21,8 @@ pub fn render_html(session_id: &str, graph: &GraphData, trend: &[TrendPoint]) ->
     let trend_json = trend_json.replace("</", "<\\/");
 
     let session_id_escaped = html_escape(session_id);
+    let legend_html = render_legend();
+    let node_colors_json = node_colors_json();
 
     format!(
         r#"<!doctype html>
@@ -42,12 +44,23 @@ pub fn render_html(session_id: &str, graph: &GraphData, trend: &[TrendPoint]) ->
     <div id="cy-panel-body"></div>
   </div>
 </section>
+<section id="legend-section">
+{legend_html}
+</section>
 <section id="trend-section">
-  <svg id="trend-svg" width="900" height="220"></svg>
+  <h2>Context usage over time</h2>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-swatch" style="background:#3b82f6"></span>Tokens used per session</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#ef4444"></span>High-severity warning</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#eab308"></span>Medium-severity warning</span>
+    <span class="legend-item"><span class="legend-swatch" style="background:#6b7280"></span>Low-severity warning</span>
+  </div>
+  <svg id="trend-svg" width="900" height="280"></svg>
+  <div id="trend-tooltip" class="cy-tooltip" hidden></div>
 </section>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script id="trend-data" type="application/json">{trend_json}</script>
-<script id="node-colors-data" type="application/json">{NODE_COLORS}</script>
+<script id="node-colors-data" type="application/json">{node_colors_json}</script>
 <script>
 {CYTOSCAPE_JS}
 </script>
@@ -133,6 +146,52 @@ fn kind_name(kind: &crate::model::ContextSourceKind) -> &'static str {
     }
 }
 
+// Single source of truth for the legend AND the NODE_COLORS JSON blob below —
+// every entry here must have a matching kind_name() output (enforced by the
+// every_kind_name_has_a_color_entry test) so the legend can never drift out
+// of sync with what a bubble is actually colored.
+const LEGEND_ENTRIES: &[(&str, &str, &str)] = &[
+    ("file", "File read", "#3b82f6"),
+    ("shell", "Shell output", "#d946ef"),
+    ("mcp", "MCP tool", "#06b6d4"),
+    ("web", "Web fetch", "#06b6d4"),
+    ("sub", "Subagent", "#eab308"),
+    ("instr", "Instruction", "#22c55e"),
+    ("edit", "File edit", "#6b7280"),
+    ("write", "File write", "#6b7280"),
+    ("session", "Session", "#6b7280"),
+    ("prompt", "User prompt", "#6b7280"),
+    ("search", "File search", "#6b7280"),
+    ("paths", "Path list", "#6b7280"),
+    ("unknown", "Unknown", "#6b7280"),
+];
+
+fn render_legend() -> String {
+    // Grey (#6b7280) covers several kinds — collapse consecutive/duplicate
+    // colors into one legend swatch labeled with all their names, rather
+    // than showing seven identical grey dots in a row.
+    let mut by_color: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (_, label, color) in LEGEND_ENTRIES {
+        match by_color.iter_mut().find(|(c, _)| c == color) {
+            Some((_, labels)) => labels.push(label),
+            None => by_color.push((color, vec![label])),
+        }
+    }
+
+    let items: String = by_color
+        .iter()
+        .map(|(color, labels)| {
+            format!(
+                r#"<span class="legend-item"><span class="legend-swatch" style="background:{color}"></span>{}</span>"#,
+                html_escape(&labels.join(" / "))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(r#"<div class="legend">{items}</div>"#)
+}
+
 #[derive(serde::Serialize)]
 struct SerializableTrendPoint {
     session_id: String,
@@ -204,17 +263,32 @@ section { margin-bottom: 2rem; }
   padding: 4px;
 }
 
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: #8b949e; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.legend-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+
+h2 { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.75rem 0; color: #8b949e; }
+#trend-svg { max-width: 100%; }
+.trend-axis-line { stroke: #30363d; stroke-width: 1; }
+.trend-gridline { stroke: #21262d; stroke-width: 1; }
+.trend-axis-label { fill: #8b949e; font-size: 10px; }
 .trend-line { fill: none; stroke: #3b82f6; stroke-width: 2; }
+.trend-point { fill: #3b82f6; stroke: #0d1117; stroke-width: 1.5; }
 .trend-high { fill: #ef4444; }
 .trend-medium { fill: #eab308; }
 .trend-low { fill: #6b7280; }
 "#;
 
 // Node color per ContextSourceKind, matching the terminal report's Painter::kind palette
-// (src/analyse/report.rs) so the HTML view reads as the same tool.
-const NODE_COLORS: &str = r##"
-{"file":"#3b82f6","shell":"#d946ef","mcp":"#06b6d4","web":"#06b6d4","sub":"#eab308","instr":"#22c55e","edit":"#6b7280","write":"#6b7280","session":"#6b7280","prompt":"#6b7280","search":"#6b7280","paths":"#6b7280","unknown":"#6b7280"}
-"##;
+// (src/analyse/report.rs) so the HTML view reads as the same tool. Derived from
+// LEGEND_ENTRIES so the legend and the bubble colors can never drift apart.
+fn node_colors_json() -> String {
+    let pairs: Vec<String> = LEGEND_ENTRIES
+        .iter()
+        .map(|(kind, _, color)| format!("\"{kind}\":\"{color}\""))
+        .collect();
+    format!("{{{}}}", pairs.join(","))
+}
 
 const JS: &str = r#"
 (function () {
@@ -290,7 +364,7 @@ const JS: &str = r#"
     },
     minZoom: 0.1,
     maxZoom: 6,
-    wheelSensitivity: 0.2,
+    wheelSensitivity: 1.5,
   });
   window.__cy = cy;
 
@@ -344,40 +418,111 @@ const JS: &str = r#"
   });
 
   const trendSvg = document.getElementById('trend-svg');
-  const tw = 900, th = 220, pad = 30;
-  if (trend.length > 0) {
-    const maxTrendTokens = Math.max(...trend.map((t) => t.approx_context_tokens), 1);
-    const stepX = trend.length > 1 ? (tw - pad * 2) / (trend.length - 1) : 0;
-    const ns2 = 'http:' + '//' + 'www.w3.org/2000/svg';
-    const points = trend.map((t, i) => {
-      const x = pad + i * stepX;
-      const y = th - pad - (t.approx_context_tokens / maxTrendTokens) * (th - pad * 2);
-      return x + ',' + y;
-    }).join(' ');
-    const polyline = document.createElementNS(ns2, 'polyline');
-    polyline.setAttribute('points', points);
-    polyline.setAttribute('class', 'trend-line');
-    trendSvg.appendChild(polyline);
+  const trendTooltip = document.getElementById('trend-tooltip');
+  const ns2 = 'http:' + '//' + 'www.w3.org/2000/svg';
 
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS(ns2, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  function shortSessionId(id) {
+    return id.length > 8 ? id.slice(0, 8) + '…' : id;
+  }
+
+  function showTrendTooltip(evt, lines) {
+    const div = document.createElement('div');
+    lines.forEach((line) => {
+      const p = document.createElement('div');
+      p.textContent = line;
+      div.appendChild(p);
+    });
+    trendTooltip.replaceChildren(div);
+    trendTooltip.style.left = (evt.clientX + 14) + 'px';
+    trendTooltip.style.top = (evt.clientY + 14) + 'px';
+    trendTooltip.hidden = false;
+  }
+
+  function hideTrendTooltip() {
+    trendTooltip.hidden = true;
+  }
+
+  if (trend.length > 0) {
+    const tw = 900, th = 280;
+    const padL = 56, padR = 20, padT = 16, padB = 40;
+    const plotW = tw - padL - padR;
+    const plotH = th - padT - padB;
+
+    const maxTrendTokens = Math.max(...trend.map((t) => t.approx_context_tokens), 1);
+    const stepX = trend.length > 1 ? plotW / (trend.length - 1) : 0;
+    const xFor = (i) => padL + (trend.length > 1 ? i * stepX : plotW / 2);
+    const yFor = (tokens) => padT + plotH - (tokens / maxTrendTokens) * plotH;
+
+    // Y-axis gridlines + token-count labels, at 4 even steps.
+    const ySteps = 4;
+    for (let s = 0; s <= ySteps; s++) {
+      const value = Math.round((maxTrendTokens / ySteps) * s);
+      const y = padT + plotH - (s / ySteps) * plotH;
+      trendSvg.appendChild(svgEl('line', {
+        x1: padL, x2: tw - padR, y1: y, y2: y, class: 'trend-gridline',
+      }));
+      const label = svgEl('text', {
+        x: padL - 8, y: y + 3, class: 'trend-axis-label', 'text-anchor': 'end',
+      });
+      label.textContent = value.toLocaleString();
+      trendSvg.appendChild(label);
+    }
+
+    // Axis lines.
+    trendSvg.appendChild(svgEl('line', { x1: padL, x2: padL, y1: padT, y2: padT + plotH, class: 'trend-axis-line' }));
+    trendSvg.appendChild(svgEl('line', { x1: padL, x2: tw - padR, y1: padT + plotH, y2: padT + plotH, class: 'trend-axis-line' }));
+
+    // X-axis session labels (skip some if too many to fit without overlap).
+    const maxLabels = 12;
+    const labelStride = Math.max(1, Math.ceil(trend.length / maxLabels));
     trend.forEach((t, i) => {
-      const x = pad + i * stepX;
-      const barBase = th - pad;
+      if (i % labelStride !== 0 && i !== trend.length - 1) return;
+      const label = svgEl('text', {
+        x: xFor(i), y: padT + plotH + 16, class: 'trend-axis-label', 'text-anchor': 'middle',
+      });
+      label.textContent = shortSessionId(t.session_id);
+      trendSvg.appendChild(label);
+    });
+
+    // Token line.
+    const points = trend.map((t, i) => xFor(i) + ',' + yFor(t.approx_context_tokens)).join(' ');
+    trendSvg.appendChild(svgEl('polyline', { points: points, class: 'trend-line' }));
+
+    // Token points, with hover tooltip showing exact session + token count.
+    trend.forEach((t, i) => {
+      const x = xFor(i), y = yFor(t.approx_context_tokens);
+      const point = svgEl('circle', { cx: x, cy: y, r: 3.5, class: 'trend-point' });
+      point.addEventListener('mousemove', (evt) => showTrendTooltip(evt, [
+        t.session_id,
+        t.approx_context_tokens.toLocaleString() + ' tokens',
+      ]));
+      point.addEventListener('mouseleave', hideTrendTooltip);
+      trendSvg.appendChild(point);
+    });
+
+    // Warning severity dots, stacked below the x-axis per session.
+    trend.forEach((t, i) => {
+      const x = xFor(i);
+      const barBase = padT + plotH + 26;
       const sizes = [
-        ['trend-high', t.high_warnings],
-        ['trend-medium', t.medium_warnings],
-        ['trend-low', t.low_warnings],
+        ['trend-high', t.high_warnings, t.high_warnings + ' high-severity warning(s)'],
+        ['trend-medium', t.medium_warnings, t.medium_warnings + ' medium-severity warning(s)'],
+        ['trend-low', t.low_warnings, t.low_warnings + ' low-severity warning(s)'],
       ];
       let offset = 0;
-      for (const [cls, count] of sizes) {
-        for (let k = 0; k < count; k++) {
-          const dot = document.createElementNS(ns2, 'circle');
-          dot.setAttribute('cx', x);
-          dot.setAttribute('cy', barBase + 10 + offset * 6);
-          dot.setAttribute('r', 2.5);
-          dot.setAttribute('class', cls);
-          trendSvg.appendChild(dot);
-          offset++;
-        }
+      for (const [cls, count, desc] of sizes) {
+        if (count === 0) continue;
+        const dot = svgEl('circle', { cx: x, cy: barBase + offset * 7, r: 2.5, class: cls });
+        dot.addEventListener('mousemove', (evt) => showTrendTooltip(evt, [t.session_id, desc]));
+        dot.addEventListener('mouseleave', hideTrendTooltip);
+        trendSvg.appendChild(dot);
+        offset++;
       }
     });
   }
@@ -514,21 +659,32 @@ mod tests {
             ContextSourceKind::Unknown,
         ];
 
-        let colors: serde_json::Value = serde_json::from_str(NODE_COLORS).unwrap();
+        let colors: serde_json::Value = serde_json::from_str(&node_colors_json()).unwrap();
         for kind in &kinds {
             let key = kind_name(kind);
             assert!(
                 colors.get(key).is_some(),
-                "expected a color entry for kind `{key}` ({kind:?}) in NODE_COLORS, found none"
+                "expected a color entry for kind `{key}` ({kind:?}) in node_colors_json(), found none"
             );
         }
     }
 
     #[test]
     fn user_prompt_kind_specifically_has_a_color_entry() {
-        let colors: serde_json::Value = serde_json::from_str(NODE_COLORS).unwrap();
+        let colors: serde_json::Value = serde_json::from_str(&node_colors_json()).unwrap();
         assert!(colors.get("prompt").is_some());
         assert!(colors.get("session").is_some());
+    }
+
+    #[test]
+    fn legend_covers_every_kind_name_with_a_visible_label() {
+        let legend = render_legend();
+        for (_, label, _) in LEGEND_ENTRIES {
+            assert!(
+                legend.contains(label),
+                "expected legend to mention `{label}`, found none in: {legend}"
+            );
+        }
     }
 
     #[test]
