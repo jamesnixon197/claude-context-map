@@ -281,7 +281,7 @@ fn label_column_width(terminal_width: usize) -> usize {
 
 // ── Pure text helpers (no ANSI; styling is applied separately at print time) ──
 
-fn kind_tag(kind: &ContextSourceKind) -> &'static str {
+pub(crate) fn kind_tag(kind: &ContextSourceKind) -> &'static str {
     match kind {
         ContextSourceKind::Session => "session",
         ContextSourceKind::UserPrompt => "prompt",

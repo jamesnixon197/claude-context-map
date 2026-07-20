@@ -49,4 +49,5 @@ pub enum Command {
     Graph {
         path: Option<PathBuf>,
     },
+    Status,
 }

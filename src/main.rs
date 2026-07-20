@@ -57,6 +57,46 @@ fn terminal_width() -> Option<usize> {
         .filter(|width| *width > 0)
 }
 
+// A status-line command must never crash or print an error into the terminal
+// bar, so every failure path here collapses to an empty (absent) fragment.
+fn render_status_line() -> String {
+    use std::io::Read;
+
+    let mut input = String::new();
+    if std::io::stdin().read_to_string(&mut input).is_err() {
+        return String::new();
+    }
+
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(&input) else {
+        return String::new();
+    };
+
+    let Some(session_id) = payload.get("session_id").and_then(|v| v.as_str()) else {
+        return String::new();
+    };
+
+    let Ok(project) = project::find_project() else {
+        return String::new();
+    };
+    let storage = storage::Storage::for_project(&project);
+
+    let session_path = storage.sessions_dir.join(format!("{session_id}.jsonl"));
+    if !session_path.exists() {
+        return String::new();
+    }
+
+    let Ok(config) = config::load_config(&storage) else {
+        return String::new();
+    };
+
+    let Ok(analysis) = analyse::analyse_file(&session_path, &config) else {
+        return String::new();
+    };
+
+    let use_color = std::env::var_os("NO_COLOR").is_none();
+    analyse::status_line(&analysis, use_color)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -209,6 +249,9 @@ fn main() -> Result<()> {
             println!("Project id:   {}", project.id);
             println!("Config file:  {}", storage.config_file.display());
             println!("Config exists: {}", storage.config_file.exists());
+        }
+        Command::Status => {
+            print!("{}", render_status_line());
         }
         Command::Graph { path } => {
             let project = project::find_project()?;

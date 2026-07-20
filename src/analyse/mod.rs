@@ -5,6 +5,7 @@ mod mcp;
 mod normalise;
 mod reader;
 mod report;
+mod status_line;
 mod summary;
 mod warnings;
 
@@ -15,6 +16,7 @@ use std::path::Path;
 
 pub use digest::{digest_body, has_signal, wrap_for_injection};
 pub use report::{print_analysis, print_source_detail};
+pub use status_line::status_line;
 
 pub fn analyse_file(path: &Path, config: &CcmapConfig) -> Result<SessionAnalysis> {
     let raw_events = reader::read_jsonl_events(path)?;
