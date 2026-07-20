@@ -46,9 +46,61 @@ fn extract_session_id(event: &Value) -> String {
 fn append_json_line(path: &std::path::Path, event: &Value) -> Result<()> {
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
-    let line = serde_json::to_string(event)?;
+    let mut line = serde_json::to_string(event)?;
+    line.push('\n');
 
-    writeln!(file, "{line}")?;
+    // ccmap capture runs as a Claude Code hook: many short-lived processes
+    // append to the same session file concurrently. O_APPEND makes a single
+    // write syscall land atomically at end-of-file, so emit the record and its
+    // newline in one write_all. Splitting them (e.g. writeln!) lets two
+    // simultaneous captures interleave and glue two objects onto one line.
+    file.write_all(line.as_bytes())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    #[test]
+    fn concurrent_appends_never_glue_two_objects_onto_one_line() {
+        let path = std::env::temp_dir().join("ccmap-capture-concurrency-test.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        let writers = 16;
+        let per_writer = 40;
+
+        let handles: Vec<_> = (0..writers)
+            .map(|writer| {
+                let path = path.clone();
+                thread::spawn(move || {
+                    for seq in 0..per_writer {
+                        let event = serde_json::json!({ "writer": writer, "seq": seq });
+                        append_json_line(&path, &event).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        let mut lines = 0;
+        for line in contents.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            lines += 1;
+            serde_json::from_str::<Value>(line).unwrap_or_else(|error| {
+                panic!("line is not exactly one JSON object ({error}): {line}");
+            });
+        }
+        assert_eq!(lines, writers * per_writer);
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

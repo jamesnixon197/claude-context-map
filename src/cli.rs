@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "ccmap")]
@@ -13,7 +14,30 @@ pub struct Cli {
 pub enum Command {
     Init,
     Capture,
-    Latest,
+    Analyse {
+        path: PathBuf,
+        #[arg(short, long)]
+        all: bool,
+        #[arg(long, value_name = "KIND")]
+        kind: Vec<String>,
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+        #[arg(long)]
+        detail: bool,
+    },
+    Latest {
+        #[arg(short, long)]
+        all: bool,
+        #[arg(long, value_name = "KIND")]
+        kind: Vec<String>,
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+        #[arg(long)]
+        detail: bool,
+    },
+    Show {
+        n: usize,
+    },
     History,
     Doctor,
 }
