@@ -2,6 +2,7 @@ use crate::analyse::classify::{classify_source_kind, match_confidence_for_kind};
 use crate::analyse::estimate::{
     estimate_approximate_characters_used, estimate_approximate_tokens_used,
 };
+use crate::analyse::mcp::extract_mcp_label;
 use crate::model::{ContextEvent, ContextSourceKind, TriggerReason};
 use serde_json::Value;
 
@@ -26,7 +27,13 @@ fn normalise_event(raw_value: &Value, subagent_stack: &mut Vec<String>) -> Conte
 
     let path = extract_path(raw_value, &event_source_kind);
     let command = extract_command(raw_value);
-    let source_label = extract_source_label(raw_value, &event_source_kind, &path, &command);
+    let source_label = extract_source_label(
+        raw_value,
+        &event_source_kind,
+        &path,
+        &command,
+        tool_name.as_deref(),
+    );
     let trigger_reason = resolve_trigger_reason(&event_name, &event_source_kind, subagent_stack);
 
     update_subagent_stack(&event_name, raw_value, subagent_stack);
@@ -100,9 +107,13 @@ fn extract_source_label(
     kind: &ContextSourceKind,
     path: &Option<String>,
     command: &Option<String>,
+    tool_name: Option<&str>,
 ) -> Option<String> {
     match kind {
-        ContextSourceKind::McpTool { server } => Some(server.clone()),
+        ContextSourceKind::McpTool { server } => {
+            let tool_name = tool_name.unwrap_or(server);
+            Some(extract_mcp_label(tool_name, server, raw_value))
+        }
         ContextSourceKind::Web => extract_url(raw_value),
         ContextSourceKind::Subagent => extract_subagent_name(raw_value),
         ContextSourceKind::FileRead

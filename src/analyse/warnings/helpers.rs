@@ -10,6 +10,10 @@ pub fn describe_event(event: &ContextEvent) -> String {
         return format!("Command: {}", command);
     }
 
+    if let Some(source_label) = &event.source_label {
+        return source_label.clone();
+    }
+
     event
         .tool_name
         .clone()
