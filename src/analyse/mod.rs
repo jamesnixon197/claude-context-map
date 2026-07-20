@@ -15,11 +15,7 @@ pub use report::print_analysis;
 
 pub fn analyse_file(path: &Path, config: &CcmapConfig) -> Result<SessionAnalysis> {
     let raw_events = reader::read_jsonl_events(path)?;
-
-    let events = raw_events
-        .iter()
-        .map(normalise::normalise_event)
-        .collect::<Vec<_>>();
+    let events = normalise::normalise_events(&raw_events);
 
     Ok(summary::build_analysis(events, config))
 }
