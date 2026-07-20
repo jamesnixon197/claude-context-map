@@ -23,3 +23,11 @@ pub fn is_configured_lockfile(path: &str, config: &CcmapConfig) -> bool {
         .iter()
         .any(|lockfile_name| path.ends_with(lockfile_name.as_str()))
 }
+
+pub fn is_configured_generated_path(path: &str, config: &CcmapConfig) -> bool {
+    config
+        .warning_rules
+        .generated_path_segments
+        .iter()
+        .any(|segment| path.contains(segment.as_str()))
+}
