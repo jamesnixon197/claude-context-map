@@ -336,6 +336,25 @@ mod tests {
     }
 
     #[test]
+    fn escapes_a_label_containing_a_literal_closing_script_tag() {
+        // Unlike the fixture above (which never contains "</script>" at all),
+        // this label contains the literal substring, so the test can only
+        // pass if the escaping transform actually ran on it.
+        let mut graph = sample_graph();
+        graph.nodes[0].label = "</script><script>alert(1)</script>".to_string();
+        let html = render_html("demo-session", &graph, &sample_trend());
+
+        assert!(
+            !html.contains("</script><script>alert(1)</script>"),
+            "hostile label's raw closing tag must not appear unescaped in the output"
+        );
+        assert!(
+            html.contains("<\\/script>"),
+            "escaped form of the hostile label's closing tag must appear in the output"
+        );
+    }
+
+    #[test]
     fn has_no_external_network_references() {
         let html = render_html("demo-session", &sample_graph(), &sample_trend());
         assert!(!html.contains("http://"));
