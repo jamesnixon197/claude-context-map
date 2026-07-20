@@ -1,3 +1,10 @@
+#[derive(Debug, Clone, Copy)]
+pub struct ReportOptions {
+    pub all: bool,
+    pub use_color: bool,
+    pub terminal_width: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextSourceKind {
     Session,

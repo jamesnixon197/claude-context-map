@@ -14,8 +14,15 @@ pub struct Cli {
 pub enum Command {
     Init,
     Capture,
-    Analyse { path: PathBuf },
-    Latest,
+    Analyse {
+        path: PathBuf,
+        #[arg(short, long)]
+        all: bool,
+    },
+    Latest {
+        #[arg(short, long)]
+        all: bool,
+    },
     History,
     Doctor,
 }
