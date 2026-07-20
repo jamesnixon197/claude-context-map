@@ -70,6 +70,24 @@ impl Storage {
         Ok(sessions_with_times.pop().map(|(path, _)| path))
     }
 
+    pub fn session_files_ordered_by_time(&self) -> Result<Vec<PathBuf>> {
+        let sessions = self.session_files()?;
+
+        let times: std::io::Result<Vec<SystemTime>> = sessions
+            .iter()
+            .map(|path| fs::metadata(path).and_then(|meta| meta.modified()))
+            .collect();
+
+        match times {
+            Ok(times) => {
+                let mut paired: Vec<_> = sessions.into_iter().zip(times).collect();
+                paired.sort_by_key(|(_, modified)| *modified);
+                Ok(paired.into_iter().map(|(path, _)| path).collect())
+            }
+            Err(_) => Ok(sessions), // fall back to the existing path-sorted order
+        }
+    }
+
     pub fn previous_substantive_session(
         &self,
         current_id: Option<&str>,
@@ -106,7 +124,12 @@ fn select_previous(
 
 fn count_lines(path: &std::path::Path) -> usize {
     fs::read_to_string(path)
-        .map(|content| content.lines().filter(|line| !line.trim().is_empty()).count())
+        .map(|content| {
+            content
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count()
+        })
         .unwrap_or(0)
 }
 
@@ -147,6 +170,38 @@ mod tests {
             ("a.jsonl".to_string(), "A".to_string(), 9usize, 2u64),
             ("b.jsonl".to_string(), "B".to_string(), 3usize, 3u64),
         ];
-        assert_eq!(select_previous(&entries, None, 5).as_deref(), Some("a.jsonl"));
+        assert_eq!(
+            select_previous(&entries, None, 5).as_deref(),
+            Some("a.jsonl")
+        );
+    }
+
+    #[test]
+    fn session_files_ordered_by_time_sorts_oldest_first() {
+        let dir = std::env::temp_dir().join(format!("ccmap-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let storage = Storage {
+            base_dir: dir.clone(),
+            sessions_dir: dir.clone(),
+            reports_dir: dir.join("reports"),
+            project_file: dir.join("project.json"),
+            config_file: dir.join("config.toml"),
+            settings_file: dir.join("settings.local.json"),
+        };
+
+        fs::write(dir.join("b.jsonl"), "{}").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        fs::write(dir.join("a.jsonl"), "{}").unwrap();
+
+        let ordered = storage.session_files_ordered_by_time().unwrap();
+        let names: Vec<_> = ordered
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["b.jsonl", "a.jsonl"]);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
