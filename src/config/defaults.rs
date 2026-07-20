@@ -33,6 +33,7 @@ pub struct WarningRules {
     pub large_context_token_threshold: usize,
     pub repeated_read_threshold: usize,
     pub large_shell_output_token_threshold: usize,
+    pub large_mcp_response_token_threshold: usize,
     pub lockfile_names: Vec<String>,
     pub generated_path_segments: Vec<String>,
 }
@@ -43,6 +44,7 @@ impl Default for WarningRules {
             large_context_token_threshold: 4_000,
             repeated_read_threshold: 3,
             large_shell_output_token_threshold: 4_000,
+            large_mcp_response_token_threshold: 4_000,
             lockfile_names: vec![
                 "package-lock.json".to_string(),
                 "pnpm-lock.yaml".to_string(),
