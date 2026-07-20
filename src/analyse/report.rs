@@ -299,7 +299,7 @@ fn kind_tag(kind: &ContextSourceKind) -> &'static str {
     }
 }
 
-fn fit_label(kind: &ContextSourceKind, raw: &str, budget: usize, all: bool) -> String {
+pub(crate) fn fit_label(kind: &ContextSourceKind, raw: &str, budget: usize, all: bool) -> String {
     let normalised = match kind {
         ContextSourceKind::FileRead
         | ContextSourceKind::FileEdit

@@ -1,5 +1,5 @@
-use super::report::format_count;
-use crate::model::{SessionAnalysis, WarningSeverity};
+use super::report::{fit_label, format_count};
+use crate::model::{ContextSourceKind, SessionAnalysis, WarningSeverity};
 
 pub fn has_signal(analysis: &SessionAnalysis, dominant_share_threshold: f64) -> bool {
     if !analysis.warnings.is_empty() {
@@ -20,6 +20,34 @@ pub fn has_signal(analysis: &SessionAnalysis, dominant_share_threshold: f64) -> 
 
 fn basename(label: &str) -> String {
     label.rsplit('/').next().unwrap_or(label).to_string()
+}
+
+// Render a source's label the same way the map report does: shell commands
+// are summarised (heredocs collapsed, verb · targets), file paths reduced to
+// a basename, everything else whitespace-collapsed. Keeps the digest — which
+// is injected straight into Claude's context — from leaking a raw multi-line
+// script.
+const MAX_DIGEST_LABEL_CHARS: usize = 60;
+
+fn source_label_for_digest(kind: &ContextSourceKind, raw: &str) -> String {
+    let fitted = fit_label(kind, raw, 0, true);
+    let label = match kind {
+        ContextSourceKind::FileRead
+        | ContextSourceKind::FileEdit
+        | ContextSourceKind::FileWrite
+        | ContextSourceKind::Instruction => basename(&fitted),
+        _ => fitted,
+    };
+
+    // Defensive cap: this text is injected straight into Claude's context, so
+    // no summarised label — however produced — should be able to blow the
+    // digest's size budget.
+    if label.chars().count() <= MAX_DIGEST_LABEL_CHARS {
+        label
+    } else {
+        let kept: String = label.chars().take(MAX_DIGEST_LABEL_CHARS - 1).collect();
+        format!("{kept}…")
+    }
 }
 
 fn count_severity(analysis: &SessionAnalysis) -> (usize, usize, usize) {
@@ -61,7 +89,8 @@ pub fn digest_body(analysis: &SessionAnalysis) -> String {
             } else {
                 String::new()
             };
-            format!("{} {}%{}", basename(&source.source_label), pct, occ)
+            let label = source_label_for_digest(&source.source_kind, &source.source_label);
+            format!("{label} {pct}%{occ}")
         })
         .collect();
 
@@ -97,7 +126,7 @@ pub fn wrap_for_injection(body: &str) -> String {
         return String::new();
     }
     format!(
-        "<ccmap-previous-session-digest>\nContext usage from the user's previous session in this project:\n{body}\n\nIf relevant to how this session starts, you may briefly mention where the user's context went last time and offer to work in a way that avoids it. Don't force it if the user is already focused on a task.\n</ccmap-previous-session-digest>"
+        "<ccmap-previous-session-digest>\nContext usage from the user's previous session in this project:\n{body}\n\nProactively mention this to the user near the start of your reply — briefly note where their context went last time and, if it looks avoidable (e.g. a large file read repeatedly), offer to work around it this session. Keep it to a sentence or two. Skip it only if the user's first message is itself urgent or clearly unrelated to how you work together.\n</ccmap-previous-session-digest>"
     )
 }
 
@@ -137,6 +166,59 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn analysis_with_kinds(
+        tokens: usize,
+        sources: Vec<(usize, &str, ContextSourceKind)>,
+    ) -> SessionAnalysis {
+        SessionAnalysis {
+            session_id: "01e1536f-aaaa".to_string(),
+            instruction_files_loaded: 0,
+            files_read: 0,
+            file_searches: 0,
+            file_path_lists: 0,
+            bash_commands: 0,
+            files_edited: 0,
+            files_written: 0,
+            subagents: 0,
+            approx_context_tokens: tokens,
+            context_map: sources
+                .into_iter()
+                .map(|(t, label, kind)| ContextSourceSummary {
+                    source_kind: kind,
+                    source_label: label.to_string(),
+                    occurrences: 1,
+                    approx_tokens: t,
+                    trigger_reasons: Vec::new(),
+                })
+                .collect(),
+            events: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn digest_body_summarises_a_multiline_shell_label_instead_of_leaking_it() {
+        let heredoc = "cd /repo\npython3 -c \"\nimport json\nwith open('definitions.json') as f:\n    defs = json.load(f)\n\"";
+        let a = analysis_with_kinds(
+            10_000,
+            vec![(700, heredoc, ContextSourceKind::ShellOutput)],
+        );
+        let body = digest_body(&a);
+        let top_consumers_line = body
+            .lines()
+            .find(|line| line.starts_with("Top consumers:"))
+            .expect("digest body has a Top consumers line");
+
+        assert!(
+            !top_consumers_line.contains("import json"),
+            "digest leaked raw script content: {top_consumers_line:?}"
+        );
+        assert!(
+            top_consumers_line.contains("python3"),
+            "digest should still show the summarised command: {top_consumers_line:?}"
+        );
     }
 
     #[test]
