@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod model;
 mod project;
+mod render;
 mod storage;
 
 use anyhow::Result;
@@ -74,16 +75,35 @@ fn main() -> Result<()> {
         Command::Capture => {
             capture::capture_from_stdin()?;
         }
-        Command::Analyse { path, all, kind, top, detail } => {
+        Command::Analyse {
+            path,
+            all,
+            kind,
+            top,
+            detail,
+        } => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
 
             let analysis = analyse::analyse_file(&path, &config)?;
-            let options = resolve_report_options(ReportFlags { all, kind, top, detail }, &config);
+            let options = resolve_report_options(
+                ReportFlags {
+                    all,
+                    kind,
+                    top,
+                    detail,
+                },
+                &config,
+            );
             analyse::print_analysis(&analysis, &options);
         }
-        Command::Latest { all, kind, top, detail } => {
+        Command::Latest {
+            all,
+            kind,
+            top,
+            detail,
+        } => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
@@ -91,8 +111,15 @@ fn main() -> Result<()> {
             match storage.latest_session_file()? {
                 Some(path) => {
                     let analysis = analyse::analyse_file(&path, &config)?;
-                    let options =
-                        resolve_report_options(ReportFlags { all, kind, top, detail }, &config);
+                    let options = resolve_report_options(
+                        ReportFlags {
+                            all,
+                            kind,
+                            top,
+                            detail,
+                        },
+                        &config,
+                    );
                     analyse::print_analysis(&analysis, &options);
                 }
                 None => println!("No sessions captured yet."),
@@ -107,7 +134,12 @@ fn main() -> Result<()> {
                 Some(path) => {
                     let analysis = analyse::analyse_file(&path, &config)?;
                     let options = resolve_report_options(
-                        ReportFlags { all: true, kind: Vec::new(), top: None, detail: false },
+                        ReportFlags {
+                            all: true,
+                            kind: Vec::new(),
+                            top: None,
+                            detail: false,
+                        },
                         &config,
                     );
                     analyse::print_source_detail(&analysis, n, &options)?;
@@ -115,7 +147,10 @@ fn main() -> Result<()> {
                 None => println!("No sessions captured yet."),
             }
         }
-        Command::Digest { session, for_injection } => {
+        Command::Digest {
+            session,
+            for_injection,
+        } => {
             let project = project::find_project()?;
             let storage = storage::Storage::for_project(&project);
             let config = config::load_config(&storage)?;
@@ -124,8 +159,10 @@ fn main() -> Result<()> {
                 Some(path) => Some(path),
                 None => {
                     let current = std::env::var("CLAUDE_CODE_SESSION_ID").ok();
-                    storage
-                        .previous_substantive_session(current.as_deref(), config.digest.min_events)?
+                    storage.previous_substantive_session(
+                        current.as_deref(),
+                        config.digest.min_events,
+                    )?
                 }
             };
 
