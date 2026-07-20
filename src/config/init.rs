@@ -33,87 +33,97 @@ fn write_project_file(project: &Project, storage: &Storage) -> Result<()> {
 }
 
 fn write_local_settings(storage: &Storage) -> Result<()> {
-    let settings = json!({
-        "hooks": {
-            "SessionStart": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "InstructionsLoaded": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "PostToolUse": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "PostToolBatch": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "SubagentStart": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "SubagentStop": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ],
-            "Stop": [
-                {
-                    "matcher": "",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "ccmap capture"
-                        }
-                    ]
-                }
-            ]
-        }
+    let hooks = json!({
+        "SessionStart": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            },
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap digest --for-injection"
+                    }
+                ]
+            }
+        ],
+        "InstructionsLoaded": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ],
+        "PostToolBatch": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ],
+        "SubagentStart": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ],
+        "SubagentStop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "ccmap capture"
+                    }
+                ]
+            }
+        ]
     });
+
+    let existing_content = fs::read_to_string(&storage.settings_file).ok();
+    let merged = merge_settings(existing_content.as_deref(), &hooks)?;
 
     if let Some(parent) = storage.settings_file.parent() {
         fs::create_dir_all(parent)?;
@@ -121,7 +131,7 @@ fn write_local_settings(storage: &Storage) -> Result<()> {
 
     fs::write(
         &storage.settings_file,
-        serde_json::to_string_pretty(&settings)?,
+        serde_json::to_string_pretty(&merged)?,
     )?;
 
     Ok(())
@@ -322,5 +332,75 @@ mod tests {
     fn merge_settings_falls_back_to_fresh_output_on_unparseable_existing_content() {
         let result = merge_settings(Some("{ this is not valid json"), &ccmap_hooks()).unwrap();
         assert_eq!(result, json!({ "hooks": ccmap_hooks() }));
+    }
+
+    #[test]
+    fn write_local_settings_includes_the_digest_hook_on_a_fresh_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "ccmap-init-test-{}-{}",
+            std::process::id(),
+            "fresh"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let storage = crate::storage::Storage {
+            base_dir: dir.clone(),
+            sessions_dir: dir.join("sessions"),
+            reports_dir: dir.join("reports"),
+            project_file: dir.join("project.json"),
+            config_file: dir.join("config.toml"),
+            settings_file: dir.join("settings.local.json"),
+        };
+
+        write_local_settings(&storage).unwrap();
+
+        let content = std::fs::read_to_string(&storage.settings_file).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        let session_start = parsed["hooks"]["SessionStart"].as_array().unwrap();
+        let commands: Vec<&str> = session_start
+            .iter()
+            .flat_map(|entry| entry["hooks"].as_array().unwrap())
+            .map(|h| h["command"].as_str().unwrap())
+            .collect();
+        assert!(commands.contains(&"ccmap capture"));
+        assert!(commands.contains(&"ccmap digest --for-injection"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_local_settings_is_safe_to_run_twice_without_duplicating_hooks() {
+        let dir = std::env::temp_dir().join(format!(
+            "ccmap-init-test-{}-{}",
+            std::process::id(),
+            "twice"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let storage = crate::storage::Storage {
+            base_dir: dir.clone(),
+            sessions_dir: dir.join("sessions"),
+            reports_dir: dir.join("reports"),
+            project_file: dir.join("project.json"),
+            config_file: dir.join("config.toml"),
+            settings_file: dir.join("settings.local.json"),
+        };
+
+        write_local_settings(&storage).unwrap();
+        write_local_settings(&storage).unwrap();
+
+        let content = std::fs::read_to_string(&storage.settings_file).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let session_start = parsed["hooks"]["SessionStart"].as_array().unwrap();
+        assert_eq!(
+            session_start.len(),
+            2,
+            "running init twice must not duplicate the SessionStart hooks"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
