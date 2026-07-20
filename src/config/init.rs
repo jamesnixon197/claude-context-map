@@ -1,3 +1,4 @@
+use crate::config::defaults::write_default_config_if_missing;
 use crate::project::Project;
 use crate::storage::Storage;
 use anyhow::Result;
@@ -9,6 +10,7 @@ pub fn init_project(project: &Project, storage: &Storage) -> Result<()> {
     storage.create_dirs()?;
 
     write_project_file(project, storage)?;
+    write_default_config_if_missing(storage)?;
     write_local_settings(storage)?;
 
     Ok(())
