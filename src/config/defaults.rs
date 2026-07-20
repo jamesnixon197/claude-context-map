@@ -8,6 +8,7 @@ use std::fs;
 pub struct CcmapConfig {
     pub mode: CaptureMode,
     pub warning_rules: WarningRules,
+    pub links: LinkConfig,
 }
 
 impl Default for CcmapConfig {
@@ -15,8 +16,15 @@ impl Default for CcmapConfig {
         Self {
             mode: CaptureMode::default(),
             warning_rules: WarningRules::default(),
+            links: LinkConfig::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinkConfig {
+    pub linear: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -86,4 +94,22 @@ pub fn write_default_config_if_missing(storage: &Storage) -> Result<()> {
     fs::write(&storage.config_file, content)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_parses_links_linear_base() {
+        let toml = "mode = \"safe\"\n[links]\nlinear = \"https://linear.app/acme\"\n";
+        let config: CcmapConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.links.linear.as_deref(), Some("https://linear.app/acme"));
+    }
+
+    #[test]
+    fn config_defaults_links_to_none() {
+        let config = CcmapConfig::default();
+        assert_eq!(config.links.linear, None);
+    }
 }
