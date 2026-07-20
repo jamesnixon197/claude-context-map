@@ -1,6 +1,8 @@
 use crate::render::graph_data::GraphData;
 use crate::render::trend_data::TrendPoint;
 
+const CYTOSCAPE_JS: &str = include_str!("vendor/cytoscape.min.js");
+
 pub fn render_html(session_id: &str, graph: &GraphData, trend: &[TrendPoint]) -> String {
     let graph_json = serde_json::to_string(&SerializableGraph::from(graph))
         .unwrap_or_else(|_| "{\"nodes\":[],\"edges\":[]}".to_string());
@@ -33,13 +35,22 @@ pub fn render_html(session_id: &str, graph: &GraphData, trend: &[TrendPoint]) ->
 <body>
 <h1>Session: {session_id_escaped}</h1>
 <section id="graph-section">
-  <svg id="graph-svg" width="900" height="600"></svg>
+  <div id="cy"></div>
+  <div id="cy-tooltip" class="cy-tooltip" hidden></div>
+  <div id="cy-panel" class="cy-panel" hidden>
+    <button id="cy-panel-close" class="cy-panel-close" type="button" aria-label="Close">×</button>
+    <div id="cy-panel-body"></div>
+  </div>
 </section>
 <section id="trend-section">
   <svg id="trend-svg" width="900" height="220"></svg>
 </section>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script id="trend-data" type="application/json">{trend_json}</script>
+<script id="node-colors-data" type="application/json">{NODE_COLORS}</script>
+<script>
+{CYTOSCAPE_JS}
+</script>
 <script>
 {JS}
 </script>
@@ -147,100 +158,203 @@ const CSS: &str = r#"
 body { font-family: -apple-system, sans-serif; margin: 2rem; background: #0d1117; color: #e6edf3; }
 h1 { font-size: 1.1rem; font-weight: 600; }
 section { margin-bottom: 2rem; }
-.node-file { fill: #3b82f6; }
-.node-shell { fill: #d946ef; }
-.node-mcp { fill: #06b6d4; }
-.node-sub { fill: #eab308; }
-.node-instr { fill: #22c55e; }
-.node-web { fill: #06b6d4; }
-.node-edit, .node-write, .node-session, .node-prompt, .node-search, .node-paths, .node-unknown, .node-default { fill: #6b7280; }
-.edge { stroke: #30363d; stroke-width: 1; }
-.node-label { fill: #e6edf3; font-size: 10px; }
+#cy { width: 900px; height: 600px; max-width: 100%; background: #0d1117; border: 1px solid #30363d; position: relative; }
+
+.cy-tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  max-width: 420px;
+  word-break: break-all;
+}
+
+.cy-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+  font-size: 13px;
+  padding: 12px 36px 12px 14px;
+  border-radius: 6px;
+  max-width: 640px;
+  word-break: break-all;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.cy-panel-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #e6edf3;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+}
+
 .trend-line { fill: none; stroke: #3b82f6; stroke-width: 2; }
 .trend-high { fill: #ef4444; }
 .trend-medium { fill: #eab308; }
 .trend-low { fill: #6b7280; }
 "#;
 
+// Node color per ContextSourceKind, matching the terminal report's Painter::kind palette
+// (src/analyse/report.rs) so the HTML view reads as the same tool.
+const NODE_COLORS: &str = r##"
+{"file":"#3b82f6","shell":"#d946ef","mcp":"#06b6d4","web":"#06b6d4","sub":"#eab308","instr":"#22c55e","edit":"#6b7280","write":"#6b7280","session":"#6b7280","prompt":"#6b7280","search":"#6b7280","paths":"#6b7280","unknown":"#6b7280"}
+"##;
+
 const JS: &str = r#"
 (function () {
   const graph = JSON.parse(document.getElementById('graph-data').textContent);
   const trend = JSON.parse(document.getElementById('trend-data').textContent);
-  const svg = document.getElementById('graph-svg');
-  const width = 900, height = 600;
+  const nodeColors = JSON.parse(document.getElementById('node-colors-data').textContent);
 
-  const nodes = graph.nodes.map((n) => ({
-    ...n,
-    x: width / 2 + (Math.random() - 0.5) * 200,
-    y: height / 2 + (Math.random() - 0.5) * 200,
-    r: Math.max(6, Math.sqrt(n.approx_tokens) * 1.5),
-  }));
-  const edges = graph.edges;
+  const minTokens = graph.nodes.length ? Math.min(...graph.nodes.map((n) => n.approx_tokens)) : 0;
+  const maxTokens = graph.nodes.length ? Math.max(...graph.nodes.map((n) => n.approx_tokens)) : 1;
 
-  for (let iter = 0; iter < 200; iter++) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i], b = nodes[j];
-        let dx = a.x - b.x, dy = a.y - b.y;
-        let dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const minDist = a.r + b.r + 20;
-        if (dist < minDist) {
-          const push = (minDist - dist) / dist * 0.5;
-          a.x += dx * push; a.y += dy * push;
-          b.x -= dx * push; b.y -= dy * push;
-        }
-      }
-    }
-    for (const edge of edges) {
-      const a = nodes[edge.from], b = nodes[edge.to];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      a.x += dx * 0.01; a.y += dy * 0.01;
-      b.x -= dx * 0.01; b.y -= dy * 0.01;
-    }
-    for (const n of nodes) {
-      n.x += (width / 2 - n.x) * 0.001;
-      n.y += (height / 2 - n.y) * 0.001;
-      n.x = Math.max(n.r, Math.min(width - n.r, n.x));
-      n.y = Math.max(n.r, Math.min(height - n.r, n.y));
-    }
+  function sizeFor(tokens) {
+    const lo = 18, hi = 90;
+    if (maxTokens <= minTokens) return (lo + hi) / 2;
+    const t = (tokens - minTokens) / (maxTokens - minTokens);
+    // sqrt easing so *area* differences track token differences, not raw radius.
+    return lo + Math.sqrt(t) * (hi - lo);
   }
 
-  // Built via concatenation so the emitted document has no literal
-  // scheme://host substring that could be mistaken for a network reference.
-  const ns = 'http:' + '//' + 'www.w3.org/2000/svg';
-  for (const edge of edges) {
-    const a = nodes[edge.from], b = nodes[edge.to];
-    const line = document.createElementNS(ns, 'line');
-    line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
-    line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
-    line.setAttribute('class', 'edge');
-    svg.appendChild(line);
+  const elements = [];
+  for (const n of graph.nodes) {
+    elements.push({
+      data: {
+        id: 'n' + n.id,
+        label: n.label,
+        kind: n.kind,
+        tokens: n.approx_tokens,
+        occurrences: n.occurrences,
+        color: nodeColors[n.kind] || nodeColors.unknown,
+        size: sizeFor(n.approx_tokens),
+      },
+    });
   }
-  for (const n of nodes) {
-    const circle = document.createElementNS(ns, 'circle');
-    circle.setAttribute('cx', n.x); circle.setAttribute('cy', n.y);
-    circle.setAttribute('r', n.r);
-    circle.setAttribute('class', 'node-' + n.kind);
-    svg.appendChild(circle);
-    const text = document.createElementNS(ns, 'text');
-    text.setAttribute('x', n.x); text.setAttribute('y', n.y - n.r - 4);
-    text.setAttribute('class', 'node-label');
-    text.setAttribute('text-anchor', 'middle');
-    text.textContent = n.label + ' (' + n.approx_tokens + ')';
-    svg.appendChild(text);
+  for (const e of graph.edges) {
+    elements.push({ data: { id: 'e' + e.from + '_' + e.to, source: 'n' + e.from, target: 'n' + e.to } });
   }
+
+  const cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': 'data(color)',
+          width: 'data(size)',
+          height: 'data(size)',
+          label: '',
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          width: 1,
+          'line-color': '#30363d',
+          'curve-style': 'haystack',
+          'haystack-radius': 0,
+        },
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 2,
+          'border-color': '#e6edf3',
+        },
+      },
+    ],
+    layout: {
+      name: 'cose',
+      animate: false,
+      nodeOverlap: 12,
+      idealEdgeLength: 60,
+      nodeRepulsion: 200000,
+    },
+    minZoom: 0.1,
+    maxZoom: 6,
+    wheelSensitivity: 0.2,
+  });
+  window.__cy = cy;
+
+  const tooltip = document.getElementById('cy-tooltip');
+  const panel = document.getElementById('cy-panel');
+  const panelBody = document.getElementById('cy-panel-body');
+  const panelClose = document.getElementById('cy-panel-close');
+
+  function detailHtml(n) {
+    const label = n.data('label');
+    const kind = n.data('kind');
+    const tokens = n.data('tokens');
+    const occurrences = n.data('occurrences');
+    const div = document.createElement('div');
+    const kindLine = document.createElement('div');
+    kindLine.textContent = kind + '  ·  ' + tokens + ' tokens  ·  ' + occurrences + ' occurrence(s)';
+    kindLine.style.opacity = '0.7';
+    kindLine.style.marginBottom = '4px';
+    const labelLine = document.createElement('div');
+    labelLine.textContent = label;
+    div.appendChild(kindLine);
+    div.appendChild(labelLine);
+    return div;
+  }
+
+  cy.on('mouseover', 'node', function (evt) {
+    const n = evt.target;
+    tooltip.replaceChildren(detailHtml(n));
+    tooltip.hidden = false;
+  });
+
+  cy.on('mousemove', 'node', function (evt) {
+    const pos = evt.originalEvent;
+    if (!pos) return;
+    tooltip.style.left = (pos.clientX + 14) + 'px';
+    tooltip.style.top = (pos.clientY + 14) + 'px';
+  });
+
+  cy.on('mouseout', 'node', function () {
+    tooltip.hidden = true;
+  });
+
+  cy.on('tap', 'node', function (evt) {
+    const n = evt.target;
+    panelBody.replaceChildren(detailHtml(n));
+    panel.hidden = false;
+  });
+
+  panelClose.addEventListener('click', function () {
+    panel.hidden = true;
+  });
 
   const trendSvg = document.getElementById('trend-svg');
   const tw = 900, th = 220, pad = 30;
   if (trend.length > 0) {
-    const maxTokens = Math.max(...trend.map((t) => t.approx_context_tokens), 1);
+    const maxTrendTokens = Math.max(...trend.map((t) => t.approx_context_tokens), 1);
     const stepX = trend.length > 1 ? (tw - pad * 2) / (trend.length - 1) : 0;
+    const ns2 = 'http:' + '//' + 'www.w3.org/2000/svg';
     const points = trend.map((t, i) => {
       const x = pad + i * stepX;
-      const y = th - pad - (t.approx_context_tokens / maxTokens) * (th - pad * 2);
+      const y = th - pad - (t.approx_context_tokens / maxTrendTokens) * (th - pad * 2);
       return x + ',' + y;
     }).join(' ');
-    const polyline = document.createElementNS(ns, 'polyline');
+    const polyline = document.createElementNS(ns2, 'polyline');
     polyline.setAttribute('points', points);
     polyline.setAttribute('class', 'trend-line');
     trendSvg.appendChild(polyline);
@@ -256,7 +370,7 @@ const JS: &str = r#"
       let offset = 0;
       for (const [cls, count] of sizes) {
         for (let k = 0; k < count; k++) {
-          const dot = document.createElementNS(ns, 'circle');
+          const dot = document.createElementNS(ns2, 'circle');
           dot.setAttribute('cx', x);
           dot.setAttribute('cy', barBase + 10 + offset * 6);
           dot.setAttribute('r', 2.5);
@@ -328,10 +442,6 @@ mod tests {
     fn does_not_break_out_of_the_script_tag_on_a_hostile_label() {
         // A label containing "</script>" must not prematurely close the JSON block.
         let html = render_html("demo-session", &sample_graph(), &sample_trend());
-        // The literal sequence "</script>" must not appear except at our own
-        // intentional closing tags — check no *unescaped* occurrence sits
-        // inside the JSON payload by confirming the raw closing sequence
-        // from the hostile label was escaped to "<\/script>" or similar.
         assert!(!html.contains("<script>.rs</script>"));
     }
 
@@ -356,10 +466,22 @@ mod tests {
 
     #[test]
     fn has_no_external_network_references() {
+        // The document must never fetch anything over the network: no
+        // <script src=...>/<link href=...> pointing off-host, and no
+        // fetch/XHR/WebSocket calls. A bare "http://" substring is not by
+        // itself proof of a network call — the vendored Cytoscape.js library
+        // legitimately contains license-comment URLs (e.g.
+        // "http://opensource.org/licenses/MIT") that are never requested at
+        // runtime, so check for the actual request-shaped constructs instead.
         let html = render_html("demo-session", &sample_graph(), &sample_trend());
-        assert!(!html.contains("http://"));
-        assert!(!html.contains("https://"));
-        assert!(!html.contains("cdn."));
+        assert!(!html.contains("<script src="));
+        assert!(!html.contains("<link "));
+        assert!(!html.contains("fetch("));
+        assert!(!html.contains("XMLHttpRequest"));
+        assert!(!html.contains("WebSocket("));
+        assert!(!html.contains("cdnjs.cloudflare.com"));
+        assert!(!html.contains("unpkg.com"));
+        assert!(!html.contains("jsdelivr.net"));
     }
 
     #[test]
@@ -369,12 +491,11 @@ mod tests {
     }
 
     #[test]
-    fn every_kind_name_has_a_matching_css_fill_rule() {
+    fn every_kind_name_has_a_color_entry() {
         // Regression test: build a graph containing one node per possible
-        // ContextSourceKind (not just file/shell) and confirm the emitted
-        // CSS has a selector covering each corresponding `.node-<kind>`
-        // class, so no bubble kind falls back to SVG's default black fill
-        // on the near-black page background.
+        // ContextSourceKind (not just file/shell) and confirm the embedded
+        // NODE_COLORS map has an entry for each corresponding kind string,
+        // so no bubble kind falls back to an undefined color.
         let kinds = [
             ContextSourceKind::FileRead,
             ContextSourceKind::ShellOutput,
@@ -393,58 +514,49 @@ mod tests {
             ContextSourceKind::Unknown,
         ];
 
-        let graph = GraphData {
-            nodes: kinds
-                .iter()
-                .enumerate()
-                .map(|(id, kind)| GraphNode {
-                    id,
-                    kind: kind.clone(),
-                    label: format!("node-{id}"),
-                    approx_tokens: 10,
-                    occurrences: 1,
-                })
-                .collect(),
-            edges: vec![],
-        };
-
-        let html = render_html("demo-session", &graph, &sample_trend());
-
+        let colors: serde_json::Value = serde_json::from_str(NODE_COLORS).unwrap();
         for kind in &kinds {
-            let class = format!(".node-{}", kind_name(kind));
+            let key = kind_name(kind);
             assert!(
-                html.contains(&class),
-                "expected a CSS rule for `{class}` (kind {kind:?}) in the rendered HTML, found none"
+                colors.get(key).is_some(),
+                "expected a color entry for kind `{key}` ({kind:?}) in NODE_COLORS, found none"
             );
         }
     }
 
     #[test]
-    fn user_prompt_kind_specifically_has_visible_css_coverage() {
-        // Focused check requested by the review finding: a UserPrompt (and
-        // Session) sourced node must not be left with SVG's default fill.
-        let graph = GraphData {
-            nodes: vec![
-                GraphNode {
-                    id: 0,
-                    kind: ContextSourceKind::UserPrompt,
-                    label: "hello".to_string(),
-                    approx_tokens: 20,
-                    occurrences: 1,
-                },
-                GraphNode {
-                    id: 1,
-                    kind: ContextSourceKind::Session,
-                    label: "session-start".to_string(),
-                    approx_tokens: 5,
-                    occurrences: 1,
-                },
-            ],
-            edges: vec![],
-        };
+    fn user_prompt_kind_specifically_has_a_color_entry() {
+        let colors: serde_json::Value = serde_json::from_str(NODE_COLORS).unwrap();
+        assert!(colors.get("prompt").is_some());
+        assert!(colors.get("session").is_some());
+    }
 
-        let html = render_html("demo-session", &graph, &sample_trend());
-        assert!(html.contains(".node-prompt"));
-        assert!(html.contains(".node-session"));
+    #[test]
+    fn vendors_cytoscape_inline_with_no_cdn_reference() {
+        let html = render_html("demo-session", &sample_graph(), &sample_trend());
+        assert!(
+            html.contains("cytoscape"),
+            "expected the vendored Cytoscape.js library to be embedded in the document"
+        );
+        assert!(!html.contains("cdnjs"));
+        assert!(!html.contains("unpkg"));
+        assert!(!html.contains("jsdelivr"));
+    }
+
+    #[test]
+    fn labels_are_not_drawn_by_default_only_on_interaction() {
+        // The style block must set an empty label so bubbles render clean by
+        // default; text only appears via the JS tooltip/panel on hover/click.
+        let html = render_html("demo-session", &sample_graph(), &sample_trend());
+        assert!(html.contains("label: ''"));
+    }
+
+    #[test]
+    fn includes_hover_tooltip_and_click_to_pin_panel_wiring() {
+        let html = render_html("demo-session", &sample_graph(), &sample_trend());
+        assert!(html.contains("cy-tooltip"));
+        assert!(html.contains("cy-panel"));
+        assert!(html.contains("mouseover"));
+        assert!(html.contains("'tap'"));
     }
 }
