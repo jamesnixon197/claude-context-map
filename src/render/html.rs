@@ -153,7 +153,7 @@ section { margin-bottom: 2rem; }
 .node-sub { fill: #eab308; }
 .node-instr { fill: #22c55e; }
 .node-web { fill: #06b6d4; }
-.node-edit, .node-write, .node-default { fill: #6b7280; }
+.node-edit, .node-write, .node-session, .node-prompt, .node-search, .node-paths, .node-unknown, .node-default { fill: #6b7280; }
 .edge { stroke: #30363d; stroke-width: 1; }
 .node-label { fill: #e6edf3; font-size: 10px; }
 .trend-line { fill: none; stroke: #3b82f6; stroke-width: 2; }
@@ -366,5 +366,85 @@ mod tests {
     fn includes_session_id_in_the_page() {
         let html = render_html("demo-session", &sample_graph(), &sample_trend());
         assert!(html.contains("demo-session"));
+    }
+
+    #[test]
+    fn every_kind_name_has_a_matching_css_fill_rule() {
+        // Regression test: build a graph containing one node per possible
+        // ContextSourceKind (not just file/shell) and confirm the emitted
+        // CSS has a selector covering each corresponding `.node-<kind>`
+        // class, so no bubble kind falls back to SVG's default black fill
+        // on the near-black page background.
+        let kinds = [
+            ContextSourceKind::FileRead,
+            ContextSourceKind::ShellOutput,
+            ContextSourceKind::McpTool {
+                server: "srv".to_string(),
+            },
+            ContextSourceKind::Subagent,
+            ContextSourceKind::Instruction,
+            ContextSourceKind::Web,
+            ContextSourceKind::FileEdit,
+            ContextSourceKind::FileWrite,
+            ContextSourceKind::Session,
+            ContextSourceKind::UserPrompt,
+            ContextSourceKind::FileSearch,
+            ContextSourceKind::FilePathList,
+            ContextSourceKind::Unknown,
+        ];
+
+        let graph = GraphData {
+            nodes: kinds
+                .iter()
+                .enumerate()
+                .map(|(id, kind)| GraphNode {
+                    id,
+                    kind: kind.clone(),
+                    label: format!("node-{id}"),
+                    approx_tokens: 10,
+                    occurrences: 1,
+                })
+                .collect(),
+            edges: vec![],
+        };
+
+        let html = render_html("demo-session", &graph, &sample_trend());
+
+        for kind in &kinds {
+            let class = format!(".node-{}", kind_name(kind));
+            assert!(
+                html.contains(&class),
+                "expected a CSS rule for `{class}` (kind {kind:?}) in the rendered HTML, found none"
+            );
+        }
+    }
+
+    #[test]
+    fn user_prompt_kind_specifically_has_visible_css_coverage() {
+        // Focused check requested by the review finding: a UserPrompt (and
+        // Session) sourced node must not be left with SVG's default fill.
+        let graph = GraphData {
+            nodes: vec![
+                GraphNode {
+                    id: 0,
+                    kind: ContextSourceKind::UserPrompt,
+                    label: "hello".to_string(),
+                    approx_tokens: 20,
+                    occurrences: 1,
+                },
+                GraphNode {
+                    id: 1,
+                    kind: ContextSourceKind::Session,
+                    label: "session-start".to_string(),
+                    approx_tokens: 5,
+                    occurrences: 1,
+                },
+            ],
+            edges: vec![],
+        };
+
+        let html = render_html("demo-session", &graph, &sample_trend());
+        assert!(html.contains(".node-prompt"));
+        assert!(html.contains(".node-session"));
     }
 }
